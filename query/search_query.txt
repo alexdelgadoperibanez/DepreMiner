@@ -6,4 +6,4 @@
 )
 AND (pharmacological treatment OR drug therapy OR antidepressants)
 AND (clinical trial[ptyp] OR randomized controlled trial[ptyp])
-AND 2000:2025[dp]
+AND 1990:2025[dp]
