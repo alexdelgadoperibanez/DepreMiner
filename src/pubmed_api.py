@@ -46,8 +46,8 @@ def get_all_ids(query, batch_size=100):
 
 def fetch_pubmed_abstracts(id_list):
     """
-    Dada una lista de PMIDs, descarga los datos (title, abstract) en bloques.
-    Retorna una lista de diccionarios con 'pmid', 'title', 'abstract'.
+    Dada una lista de PMIDs, descarga los datos (title, abstract, fecha de publicación) en bloques.
+    Retorna una lista de diccionarios con 'pmid', 'title', 'abstract' y 'date'.
     """
     step = 50
     results = []
@@ -60,11 +60,14 @@ def fetch_pubmed_abstracts(id_list):
                 pmid = record.get("PMID", "")
                 title = record.get("TI", "")
                 abstract = record.get("AB", "")
+                # Extraemos la fecha de publicación; el campo "DP" es el Date of Publication
+                publication_date = record.get("DP", "")
                 if pmid:
                     results.append({
                         "pmid": pmid,
                         "title": title,
-                        "abstract": abstract
+                        "abstract": abstract,
+                        "date": publication_date
                     })
             handle.close()
             time.sleep(0.3)

@@ -73,38 +73,100 @@ def split_abstract(abstract: str, tokenizer, max_tokens=MAX_TOKENS):
         abstract2 = ""
     return abstract1, abstract2
 
-def extract_entities_from_text(text: str, ner_pipe):
+def extract_entities_from_text(text: str, ner_pipe, model_name: str):
     """
     Extrae entidades de un fragmento de texto usando un pipeline NER.
-    Como el texto ya se ha dividido previamente en fragmentos menores al límite,
-    no es necesario pasar argumentos de truncation.
+    Se añade el nombre del modelo a cada entidad para luego identificar duplicados
+    provenientes de distintos pipelines.
     """
     try:
         entities = ner_pipe(text)
     except Exception as e:
         logging.error(f"Error al extraer entidades: {e}")
         entities = []
-    return convert_numpy_types(entities)
+    entities = convert_numpy_types(entities)
+    # Añadimos el nombre del modelo a cada entidad extraída
+    for ent in entities:
+        ent["model"] = model_name
+    return entities
 
-def combine_and_filter_entities(entities_all, threshold=SCORE_THRESHOLD):
+
+def combine_and_filter_entities(entities_all, threshold=SCORE_THRESHOLD, tolerance=5):
     """
-    Combina la lista de entidades de todos los modelos, filtra aquellas con score inferior
-    al threshold y elimina duplicados (usando (entity_group, word, start, end) como clave).
+    Agrupa las entidades de la lista entities_all por (entity_group, word),
+    pero también separa las ocurrencias si sus offsets difieren más que 'tolerance'.
+
+    Para cada entidad se crea una lista de ocurrencias, donde cada ocurrencia:
+      - Tiene un start y end representativo.
+      - Se acumula el score (para calcular el promedio de score) y la cantidad de apariciones.
+      - Se registra la lista de modelos que contribuyeron a esa ocurrencia.
+
+    Devuelve una lista con una entrada por cada (entity_group, word) y dentro de cada
+    entrada se incluye:
+      - "occurrences": número de ocurrencias distintas encontradas.
+      - "overall_combined_score": promedio de scores de cada ocurrencia.
+      - "models": la unión de los modelos que detectaron alguna ocurrencia.
+      - "positions": una lista de ocurrencias con su posición, score y modelos.
     """
-    unique = {}
+    grouped = {}
     for ent in entities_all:
-        if ent.get("score", 0) < threshold:
+        score = ent.get("score", 0)
+        if score < threshold:
             continue
-        key = (ent.get("entity_group"), ent.get("word"), ent.get("start"), ent.get("end"))
-        if key not in unique:
-            unique[key] = ent
-    return list(unique.values())
+        entity_group = ent.get("entity_group")
+        word = ent.get("word")
+        model = ent.get("model", "unknown")
+        start = ent.get("start")
+        end = ent.get("end")
+        key = (entity_group, word)
+        if key not in grouped:
+            grouped[key] = []
+        # Buscamos si ya existe una ocurrencia cercana (dentro de la tolerancia)
+        found = False
+        for occ in grouped[key]:
+            if abs(occ["start"] - start) <= tolerance and abs(occ["end"] - end) <= tolerance:
+                # Se considera la misma ocurrencia
+                occ["score_sum"] += score
+                occ["count"] += 1
+                occ["combined_score"] = occ["score_sum"] / occ["count"]
+                if model not in occ["models"]:
+                    occ["models"].append(model)
+                found = True
+                break
+        if not found:
+            # Nueva ocurrencia
+            grouped[key].append({
+                "start": start,
+                "end": end,
+                "score_sum": score,
+                "count": 1,
+                "combined_score": score,
+                "models": [model]
+            })
+    # Ahora combinamos la información para cada (entity_group, word)
+    result = []
+    for (entity_group, word), occ_list in grouped.items():
+        # Calculamos un score global como el promedio de los scores de cada ocurrencia
+        overall_score = sum(occ["combined_score"] for occ in occ_list) / len(occ_list)
+        # Unificamos todos los modelos que han contribuido
+        models = list({m for occ in occ_list for m in occ["models"]})
+        result.append({
+            "entity_group": entity_group,
+            "word": word,
+            "occurrences": len(occ_list),
+            "overall_combined_score": overall_score,
+            "models": models,
+            "positions": occ_list
+        })
+    return result
 
-def update_documents_with_entities(uri: str, db_name: str, collection_name: str, ner_pipelines, tokenizer):
+
+def update_documents_with_entities(uri: str, db_name: str, collection_name: str, ner_model_infos, tokenizer):
     """
     Recorre los documentos en MongoDB que tienen un 'abstract' y que aún no tienen el campo 'entities'.
     Si el abstract es largo, se divide en dos partes (abstract1 y abstract2).
-    Se extraen entidades con cada modelo y se combinan los resultados.
+    Se extraen entidades con cada modelo y se combinan los resultados evitando contar la misma
+    entidad repetidamente si la detectan distintos modelos.
     """
     client = MongoClient(uri)
     db = client[db_name]
@@ -119,21 +181,15 @@ def update_documents_with_entities(uri: str, db_name: str, collection_name: str,
     for doc in docs:
         abstract = doc["abstract"]
         abstract1, abstract2 = split_abstract(abstract, tokenizer, max_tokens=MAX_TOKENS)
-        # Actualizamos el documento con los campos abstract1 y abstract2
-        update_fields = {"abstract1": abstract1}
-        if abstract2:
-            update_fields["abstract2"] = abstract2
-        else:
-            update_fields["abstract2"] = ""
+        update_fields = {"abstract1": abstract1, "abstract2": abstract2}
 
-        # Extraer entidades de cada parte con cada modelo
         entities_total = []
-        for ner_pipe in ner_pipelines:
+        for model_name, ner_pipe in ner_model_infos:
             # Procesamos la primera parte
-            ents1 = extract_entities_from_text(abstract1, ner_pipe)
+            ents1 = extract_entities_from_text(abstract1, ner_pipe, model_name)
             # Si hay segunda parte, extraer y ajustar offsets (sumar la longitud de abstract1 en caracteres)
             if abstract2:
-                ents2 = extract_entities_from_text(abstract2, ner_pipe)
+                ents2 = extract_entities_from_text(abstract2, ner_pipe, model_name)
                 offset = len(abstract1)
                 for ent in ents2:
                     ent["start"] += offset
@@ -143,7 +199,7 @@ def update_documents_with_entities(uri: str, db_name: str, collection_name: str,
                 combined = ents1
             entities_total.extend(combined)
 
-        # Combinar, filtrar y eliminar duplicados
+        # Combinar y filtrar sin duplicar ocurrencias de distintos modelos
         entities_filtered = combine_and_filter_entities(entities_total, threshold=SCORE_THRESHOLD)
         update_fields["entities"] = entities_filtered
 
@@ -156,22 +212,22 @@ def update_documents_with_entities(uri: str, db_name: str, collection_name: str,
 
 def main():
     cfg = load_config()
-    # Parámetros de la base de datos
     mongo_uri = cfg["db"].get("uri", "mongodb://localhost:27017")
     db_name = cfg["db"].get("db_name", "PubMedDB")
     collection_name = cfg["db"].get("collection_name", "major_depression_abstracts")
 
-    # Definimos los tres modelos a usar
+    # Definimos los modelos a usar
     model_names = [
         "judithrosell/JNLPBA_PubMedBERT_NER",
         "judithrosell/BC5CDR_PubMedBERT_NER",
         "judithrosell/BioNLP13CG_PubMedBERT_NER"
     ]
-    ner_pipelines = [load_ner_pipeline(name) for name in model_names]
-    # Usamos el tokenizer del primer pipeline para el split (se asume que son compatibles)
-    tokenizer = ner_pipelines[0].tokenizer
+    # Cargamos los pipelines y asociamos cada uno con su nombre
+    ner_model_infos = [(name, load_ner_pipeline(name)) for name in model_names]
+    # Usamos el tokenizer del primer pipeline (se asume compatibilidad)
+    tokenizer = ner_model_infos[0][1].tokenizer
 
-    update_documents_with_entities(mongo_uri, db_name, collection_name, ner_pipelines, tokenizer)
+    update_documents_with_entities(mongo_uri, db_name, collection_name, ner_model_infos, tokenizer)
 
 if __name__ == "__main__":
     main()
