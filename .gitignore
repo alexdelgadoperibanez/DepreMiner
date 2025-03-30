@@ -1,0 +1,18 @@
+# Archivos compilados de Python
+*.pyc
+__pycache__/
+
+# Entornos virtuales
+.venv/
+env/
+venv/
+
+# Archivos de configuración sensibles (opcional)
+config/*.conf
+
+# Logs y archivos temporales
+*.log
+tmp/
+
+*.xml
+*.iml
