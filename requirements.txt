@@ -1,0 +1,8 @@
+streamlit
+pymongo
+faiss-cpu
+sentence-transformers
+spacy
+pandas
+numpy
+scikit-learn
