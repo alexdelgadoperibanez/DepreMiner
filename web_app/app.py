@@ -1,17 +1,17 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from wordcloud import WordCloud
 from collections import Counter
 
-import faiss
 from sentence_transformers import SentenceTransformer
 from pymongo import MongoClient
 
 from utils.ner_utils import render_ner_html
 from utils.faiss_utils import load_index_and_docs, search_similar
+from utils.bio_chat import generate_biomedical_answer
+
 
 # Configuración de la app
 st.set_page_config(page_title="PubMed TFM - Búsqueda Semántica", layout="wide")
@@ -211,14 +211,40 @@ def show_dashboard():
             for pmid in matched_pmids[:10]:
                 st.markdown(f"🔗 [PMID {pmid} - {entity_map[pmid]['title']}](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)")
 
+def show_chatbot():
+    st.title("🤖 Biomedical Chatbot - Treatments for Major Depressive Disorder")
+
+    query = st.text_input("Ask your question:", placeholder="e.g. What antidepressants are used in elderly patients?")
+    if query:
+        # Retrieve most relevant abstracts
+        results = search_similar(query, model, index, docs_texts, pmids, k=3)
+        context = "\n\n".join([
+            mongo_coll.find_one({"pmid": str(r["pmid"])}).get("abstract", "") for r in results
+        ])
+
+        prompt = f"""The following excerpts have been extracted from scientific articles about pharmacological treatments for Major Depressive Disorder:
+
+{context}
+
+Researcher's question: {query}
+
+Answer based on the articles:"""
+
+        with st.spinner("🧠 Generating response with BioGPT..."):
+            answer = generate_biomedical_answer(prompt)
+
+        st.markdown("### 💬 Chatbot response:")
+        st.success(answer)
 
 # ========================
 # NAVEGACIÓN
 # ========================
 
-page = st.sidebar.radio("🔧 Navegación", ["🔍 Búsqueda", "📊 Dashboard"])
+page = st.sidebar.radio("🔧 Navegación", ["🔍 Búsqueda", "📊 Dashboard", "🤖 Chatbot"])
 
 if page == "🔍 Búsqueda":
     show_search()
 elif page == "📊 Dashboard":
     show_dashboard()
+elif page == "🤖 Chatbot":
+    show_chatbot()
