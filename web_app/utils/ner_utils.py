@@ -1,16 +1,26 @@
 from spacy.lang.en import English
 from spacy.tokens import Span
 from spacy.util import filter_spans
-
+from typing import List, Dict, Any
 
 # Registrar la extensión solo si no está ya registrada
 if not Span.has_extension("custom_color"):
     Span.set_extension("custom_color", default=None)
 
-def render_ner_html(text, entities):
+
+def render_ner_html(text: str, entities: List[Dict[str, Any]]) -> str:
     """
     Renderiza el texto con entidades resaltadas sin solapamientos,
     aplicando colores personalizados según la clase de entidad.
+
+    Args:
+        text (str): El texto completo en el que se resaltarán las entidades.
+        entities (List[Dict[str, Any]]): Lista de entidades, cada una con:
+            - entity_group (str): Tipo de entidad (Chemical, Disease, etc.).
+            - positions (List[Dict[str, int]]): Lista de posiciones (start, end).
+
+    Returns:
+        str: HTML generado con las entidades resaltadas.
     """
     label_colors = {
         "Chemical": "#f94144",  # Rojo fuerte
@@ -39,6 +49,7 @@ def render_ner_html(text, entities):
 
     rendered = ""
     last_idx = 0
+
     for span in sorted_spans:
         rendered += text[last_idx:span.start_char]
         rendered += (
@@ -51,5 +62,5 @@ def render_ner_html(text, entities):
         last_idx = span.end_char
 
     rendered += text[last_idx:]
-    return f"<div style='line-height:1.6; font-family:sans-serif;'>{rendered}</div>"
 
+    return f"<div style='line-height:1.6; font-family:sans-serif;'>{rendered}</div>"

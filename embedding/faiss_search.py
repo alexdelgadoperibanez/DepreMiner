@@ -15,49 +15,40 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 client = MongoClient(MONGO_URI)
 coll = client[DB_NAME][COLLECTION]
 
-# Recuperar documentos y reconstruir el texto real usado en NER
-docs = list(coll.find({"processed": {"$exists": True, "$ne": []}}))
-texts = [doc.get("abstract1", "") + doc.get("abstract2", "") for doc in docs]
-pmids = [doc.get("pmid") for doc in docs]
+def load_documents_from_mongo() -> tuple[list[str], list[str]]:
+    """
+    Recupera documentos y sus PMIDs desde MongoDB.
 
-# Embeddings
-model = SentenceTransformer("all-MiniLM-L6-v2")
-embeddings = model.encode(texts, show_progress_bar=True)
+    Returns:
+        tuple[list[str], list[str]]: Una tupla que contiene listas de textos y PMIDs.
+    """
+    docs = list(coll.find({"processed": {"$exists": True, "$ne": []}}))
+    texts = [doc.get("abstract1", "") + doc.get("abstract2", "") for doc in docs]
+    pmids = [doc.get("pmid") for doc in docs]
+    return texts, pmids
 
-index = faiss.IndexFlatL2(embeddings.shape[1])
-index.add(np.array(embeddings))
+def create_and_save_embeddings(texts: list[str]) -> np.ndarray:
+    """
+    Genera y guarda embeddings para los textos utilizando un modelo de SentenceTransformer.
 
-# Guardar embeddings y PMIDs
-np.save(os.path.join(OUTPUT_DIR, "embeddings.npy"), embeddings)
-pd.DataFrame({"pmid": pmids}).to_csv(os.path.join(OUTPUT_DIR, "embedding_pmids.csv"), index=False)
-pd.DataFrame({"pmid": pmids, "text": texts}).to_csv(os.path.join(OUTPUT_DIR, "embedding_texts.csv"), index=False)
+    Args:
+        texts (list[str]): Lista de textos para generar embeddings.
 
-# Búsqueda de prueba
-query = "efficacy of SSRIs in older adults"
-q_embed = model.encode([query])
-D, I = index.search(np.array(q_embed), k=5)
+    Returns:
+        np.ndarray: Matriz de embeddings generados.
+    """
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    embeddings = model.encode(texts, show_progress_bar=True)
+    np.save(os.path.join(OUTPUT_DIR, "embeddings.npy"), embeddings)
+    return embeddings
 
-print(f"\n=== Resultados para query: '{query}' ===\n")
+def save_pmids_and_texts(pmids: list[str], texts: list[str]) -> None:
+    """
+    Guarda los PMIDs y textos en archivos CSV.
 
-results = []
-for idx, dist in zip(I[0], D[0]):
-    title = docs[idx].get("title", "")
-    snippet = texts[idx][:300]
-    pmid = docs[idx].get("pmid", "")
-    print("-", title)
-    print(snippet, "...\n")
-    print("PMID:", pmid)
-    print("Distance:", dist)
-    print()
-    results.append({
-        "pmid": pmid,
-        "title": title,
-        "abstract_snippet": snippet,
-        "distance": dist
-    })
-
-# Guardar resultados en CSV
-df_results = pd.DataFrame(results)
-df_results.to_csv(os.path.join(OUTPUT_DIR, "semantic_search_results.csv"), index=False)
-
-print("✅ Embeddings y resultados de búsqueda guardados.")
+    Args:
+        pmids (list[str]): Lista de PMIDs.
+        texts (list[str]): Lista de textos.
+    """
+    pd.DataFrame({"pmid": pmids}).to_csv(os.path.join(OUTPUT_DIR, "embedding_pmids.csv"), index=False)
+    pd.DataFrame({"pmid": pmids, "text": texts}).to_csv(os.path.join(OUTPUT_DIR, "embedding_texts.csv"), index=False)

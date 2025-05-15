@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import re
 import time
@@ -8,58 +5,74 @@ import configparser
 import spacy
 from pymongo import MongoClient
 from spacy.lang.en import STOP_WORDS
+from typing import List
 
 
-def load_config():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(base_dir, "..", "config", "config.conf")
+def load_config(config_path: str) -> configparser.ConfigParser:
+    """
+    Carga el archivo de configuración config.conf y devuelve el objeto ConfigParser.
+
+    Args:
+        config_path (str): Ruta del archivo de configuración.
+
+    Returns:
+        configparser.ConfigParser: Objeto de configuración cargado.
+    """
     cfg = configparser.ConfigParser()
     cfg.read(config_path)
     return cfg
 
-def load_spacy_model(model_name: str):
+
+def load_spacy_model(model_name: str) -> spacy.language.Language:
+    """
+    Carga el modelo de spaCy especificado.
+
+    Args:
+        model_name (str): Nombre del modelo de spaCy a cargar.
+
+    Returns:
+        spacy.language.Language: Modelo spaCy cargado.
+    """
     print(f"[INFO] Cargando modelo spaCy: {model_name}")
-    nlp = spacy.load(model_name)
-    return nlp
+    return spacy.load(model_name)
+
 
 def clean_text(text: str) -> str:
     """
-    Limpieza previa:
-      - Sustituye / por espacio para separar tokens como 'PURPOSE/BACKGROUND'
-      - Reemplaza saltos de línea con espacios
-      - Elimina espacios múltiples
+    Limpia el texto eliminando caracteres no deseados.
+
+    Args:
+        text (str): Texto a limpiar.
+
+    Returns:
+        str: Texto limpio.
     """
-    # Reemplazar todas las barras '/' por espacio
     text = text.replace("/", " ")
-
-    # Saltos de línea a espacio
     text = text.replace("\n", " ")
-
-    # Espacios múltiples
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-def tokenize_and_remove_symbols(doc, nlp) -> list[list[str]]:
+
+def tokenize_and_remove_symbols(doc: str, nlp: spacy.language.Language) -> List[List[str]]:
     """
-    - Segmenta 'doc' en oraciones con spaCy.
-    - Para cada token:
-      * minúsculas
-      * eliminamos todo lo no alfanumérico
-      * descartamos tokens vacíos
+    Segmenta el texto en oraciones y tokeniza cada oración.
+
+    Args:
+        doc (str): Texto a procesar.
+        nlp (spacy.language.Language): Modelo spaCy para tokenización.
+
+    Returns:
+        List[List[str]]: Lista de oraciones tokenizadas.
     """
     spacy_doc = nlp(doc)
     sentences = []
     for sent in spacy_doc.sents:
         tokens_clean = []
         for token in sent:
-            # Convertimos a minúsculas
             lower_text = token.text.lower()
-            # Quitamos stopwords spaCy
             if lower_text in STOP_WORDS:
                 continue
-            # Eliminamos símbolos no alfanuméricos
             cleaned = re.sub(r'[^a-z0-9]', '', lower_text)
-            # Omitimos vacíos o muy cortos
             if len(cleaned) < 3:
                 continue
             tokens_clean.append(cleaned)
@@ -67,16 +80,39 @@ def tokenize_and_remove_symbols(doc, nlp) -> list[list[str]]:
             sentences.append(tokens_clean)
     return sentences
 
-def preprocess_abstract(abstract: str, nlp) -> list[list[str]]:
+
+def preprocess_abstract(abstract: str, nlp: spacy.language.Language) -> List[List[str]]:
     """
-    1. Limpieza (sustituye '/', saltos de línea, etc.)
-    2. Segmentación y tokenización con spaCy
-    3. Eliminación de símbolos no alfanuméricos 
+    Preprocesa un abstract:
+    1. Limpieza del texto.
+    2. Tokenización y eliminación de símbolos no alfanuméricos.
+
+    Args:
+        abstract (str): Texto del abstract.
+        nlp (spacy.language.Language): Modelo spaCy para tokenización.
+
+    Returns:
+        List[List[str]]: Lista de oraciones procesadas.
     """
     abstract_clean = clean_text(abstract)
     return tokenize_and_remove_symbols(abstract_clean, nlp)
 
-def preprocess_and_update_mongo(db_name, collection_name, uri, nlp):
+
+def preprocess_and_update_mongo(
+        db_name: str, collection_name: str, uri: str, nlp: spacy.language.Language
+) -> None:
+    """
+    Preprocesa abstracts de documentos en MongoDB y actualiza cada documento.
+
+    Args:
+        db_name (str): Nombre de la base de datos.
+        collection_name (str): Nombre de la colección.
+        uri (str): URI de conexión a MongoDB.
+        nlp (spacy.language.Language): Modelo spaCy para tokenización.
+
+    Returns:
+        None
+    """
     client = MongoClient(uri)
     db = client[db_name]
     coll = db[collection_name]
@@ -99,10 +135,18 @@ def preprocess_and_update_mongo(db_name, collection_name, uri, nlp):
 
     print(f"[INFO] Se han actualizado {count_processed} documentos con el nuevo campo 'processed'.")
 
-def main():
-    cfg = load_config()
-    spacy_model_name = cfg["preprocessor"].get("spacy_model", "en_core_sci_sm")
 
+def main():
+    """
+    Función principal del script:
+    1. Carga la configuración.
+    2. Carga el modelo spaCy.
+    3. Preprocesa los abstracts de MongoDB y los actualiza.
+    """
+    config_path = os.path.join(os.path.dirname(__file__), "..", "config", "config.conf")
+    cfg = load_config(config_path)
+
+    spacy_model_name = cfg["preprocessor"].get("spacy_model", "en_core_sci_sm")
     mongo_uri = cfg["db"].get("uri", "mongodb://localhost:27017")
     db_name = cfg["db"].get("db_name", "PubMedDB")
     collection_name = cfg["db"].get("collection_name", "major_depression_abstracts")
@@ -114,6 +158,7 @@ def main():
     end_time = time.time()
 
     print(f"[DONE] Preprocesado completado en {end_time - start_time:.2f} seg.")
+
 
 if __name__ == "__main__":
     main()

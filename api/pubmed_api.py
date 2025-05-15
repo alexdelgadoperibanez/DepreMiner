@@ -1,26 +1,34 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import time
 import configparser
-import pprint
-
 from Bio import Entrez, Medline
 from pymongo import MongoClient
 
-def load_query_from_file(query_path):
-    """Lee el contenido completo de un archivo de texto y lo retorna como string."""
+def load_query_from_file(query_path: str) -> str:
+    """
+    Lee el contenido completo de un archivo de texto y lo retorna como string.
+
+    Args:
+        query_path (str): Ruta al archivo de texto que contiene la query.
+
+    Returns:
+        str: Contenido del archivo como una cadena de texto.
+    """
     with open(query_path, "r", encoding="utf-8") as f:
         query_text = f.read().strip()
     return query_text
 
-def get_all_ids(query, batch_size=100):
+def get_all_ids(query: str, batch_size: int = 100) -> list[str]:
     """
-    Recupera TODOS los IDs que concuerdan con la 'query' en PubMed,
-    iterando en páginas (retstart) hasta cubrir la cantidad total.
+    Recupera todos los IDs de artículos que coinciden con la query en PubMed.
+
+    Args:
+        query (str): Término de búsqueda en PubMed.
+        batch_size (int): Número de IDs a recuperar por lote (paginación).
+
+    Returns:
+        list[str]: Lista de IDs únicos de artículos en PubMed.
     """
-    # Búsqueda inicial para saber cuántos hay en total
     handle = Entrez.esearch(db="pubmed", term=query, retmax=0)
     record = Entrez.read(handle)
     handle.close()
@@ -37,17 +45,21 @@ def get_all_ids(query, batch_size=100):
         id_list = record.get("IdList", [])
         all_ids.extend(id_list)
 
-        time.sleep(0.3)  # para no saturar la API
+        time.sleep(0.3)
 
-    # Eliminar duplicados en caso de solapamientos
     unique_ids = list(set(all_ids))
     print(f"IDs recuperados (sin duplicados): {len(unique_ids)}")
     return unique_ids
 
-def fetch_pubmed_abstracts(id_list):
+def fetch_pubmed_abstracts(id_list: list[str]) -> list[dict]:
     """
-    Dada una lista de PMIDs, descarga los datos (title, abstract, fecha de publicación) en bloques.
-    Retorna una lista de diccionarios con 'pmid', 'title', 'abstract' y 'date'.
+    Descarga y retorna los abstracts de PubMed para una lista de IDs.
+
+    Args:
+        id_list (list): Lista de PMIDs a recuperar.
+
+    Returns:
+        list[dict]: Lista de diccionarios con 'pmid', 'title', 'abstract' y 'date'.
     """
     step = 50
     results = []
@@ -60,25 +72,27 @@ def fetch_pubmed_abstracts(id_list):
                 pmid = record.get("PMID", "")
                 title = record.get("TI", "")
                 abstract = record.get("AB", "")
-                # Extraemos la fecha de publicación; el campo "DP" es el Date of Publication
                 publication_date = record.get("DP", "")
                 if pmid:
-                    results.append({
-                        "pmid": pmid,
-                        "title": title,
-                        "abstract": abstract,
-                        "date": publication_date
-                    })
+                    results.append({"pmid": pmid, "title": title, "abstract": abstract, "date": publication_date})
             handle.close()
             time.sleep(0.3)
         except Exception as e:
             print("Error al recuperar abstracts:", e)
     return results
 
-def store_abstracts_in_mongo(abstracts, db_name, collection_name, uri):
+def store_abstracts_in_mongo(abstracts: list[dict], db_name: str, collection_name: str, uri: str) -> None:
     """
-    Almacena la lista de abstracts en MongoDB, usando update_one con upsert=True
-    para no duplicar PMIDs.
+    Almacena una lista de abstracts en una colección de MongoDB.
+
+    Args:
+        abstracts (list): Lista de diccionarios con abstracts a almacenar.
+        db_name (str): Nombre de la base de datos en MongoDB.
+        collection_name (str): Nombre de la colección en MongoDB.
+        uri (str): URI de conexión a MongoDB.
+
+    Returns:
+        None
     """
     client = MongoClient(uri)
     db = client[db_name]
@@ -89,47 +103,3 @@ def store_abstracts_in_mongo(abstracts, db_name, collection_name, uri):
         coll.update_one({"pmid": pmid}, {"$set": doc}, upsert=True)
 
     print(f"Se han almacenado/actualizado {len(abstracts)} documentos en '{collection_name}'.")
-
-if __name__ == "__main__":
-    # Directorio base de este archivo
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    ####################################################################
-    # 1) Cargamos la configuración desde config.ini
-    ####################################################################
-    config_path = os.path.join(base_dir, "..", "config", "config.conf")
-    cfg = configparser.ConfigParser()
-    cfg.read(config_path)
-
-    pubmed_email = cfg["pubmed"].get("email", "TU_CORREO@ejemplo.com")
-    batch_size = cfg["pubmed"].getint("batch_size", 100)
-
-    mongo_uri = cfg["db"].get("uri", "mongodb://localhost:27017")
-    db_name = cfg["db"].get("db_name", "PubMedDB")
-    collection_name = cfg["db"].get("collection_name", "major_depression")
-
-    # Establecemos Entrez.email
-    Entrez.email = pubmed_email
-
-    ####################################################################
-    # 2) Cargamos la query (search_query.txt)
-    ####################################################################
-    query_path = os.path.join(base_dir, "..", "query", "search_query.txt")
-    pubmed_query = load_query_from_file(query_path)
-
-    ####################################################################
-    # 3) Obtenemos todos los IDs (paginación)
-    ####################################################################
-    all_ids = get_all_ids(pubmed_query, batch_size=batch_size)
-
-    ####################################################################
-    # 4) Descargamos los abstracts
-    ####################################################################
-    data = fetch_pubmed_abstracts(all_ids)
-    print(f"Se han descargado {len(data)} abstracts.")
-
-
-    ####################################################################
-    # 5) Guardamos en MongoDB
-    ####################################################################
-    store_abstracts_in_mongo(data, db_name, collection_name, mongo_uri)

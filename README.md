@@ -1,82 +1,136 @@
 
-# PubMed Mining Project
+# PubMed TFM - Análisis de Abstracts de Depresión Mayor
 
-Este proyecto permite realizar análisis de texto y visualización de entidades a partir de abstracts de PubMed relacionados con la depresión mayor y tratamientos farmacológicos.
+Este proyecto permite realizar análisis avanzados de textos biomédicos de PubMed relacionados con la depresión mayor y sus tratamientos farmacológicos. Incluye extracción de textos, procesamiento de lenguaje natural (NER), análisis de métricas de texto, generación de embeddings y búsqueda semántica, así como un chatbot biomédico basado en BioGPT.
 
-## Estructura
+---
+
+## 🚀 Estructura del Proyecto
 
 ```
-pubmed_project_scripts/
-├── ner/
-│   └── view_entities.py         # Visualiza entidades NER desde Mongo
-├── text_mining/
-│   └── metrics.py               # Métricas: TF, WordCloud, TF-IDF, clustering
+TFM_UOC/
+├── api/
+│   └── pubmed_api.py          # Extracción de abstracts desde PubMed
+├── config/
+│   └── config.conf            # Archivo de configuración del proyecto
 ├── embedding/
-│   └── faiss_search.py          # Embeddings y búsqueda semántica
-├── output/                      # Carpeta de salida para CSVs, imágenes, vectores
+│   ├── faiss_search.py        # Generación de embeddings y búsqueda semántica
+│   └── search_engine.py       # Motor de búsqueda semántica con FAISS
+├── mining/
+│   ├── metrics.py             # Análisis de métricas de texto (TF, TF-IDF, WordCloud)
+│   └── text_mining.py         # Minería de texto y co-ocurrencias
+├── ner/
+│   ├── ner.py                 # Extracción de entidades (NER)
+│   ├── view_entities.py       # Visualización de entidades NER
+│   └── visualization.py       # Visualización gráfica de entidades
+├── output/                    # Carpeta de salida para CSVs, imágenes, vectores
+├── preprocessing/
+│   ├── preprocessor.py        # Limpieza y preprocesamiento de textos
+│   └── generate_summary.py    # Generación de resúmenes automáticos
+├── query/
+│   └── search_query.txt       # Consulta de búsqueda para PubMed
+├── web_app/
+│   ├── app.py                 # Aplicación web (Streamlit)
+│   └── utils/                 # Utilidades para la app
+└── sync_components.py         # Script maestro para gestionar el flujo del proyecto
 ```
 
-## Requisitos
+---
+
+## ⚡ Requisitos
 
 Instala las dependencias necesarias:
 
 ```bash
-pip install pymongo pandas matplotlib seaborn scikit-learn wordcloud faiss-cpu sentence-transformers
+pip install -r requirements.txt
 ```
 
-## Conexión
-
-Todos los scripts se conectan por defecto a:
-
-- Mongo URI: `mongodb://localhost:27017`
-- Base de datos: `PubMedDB`
-- Colección: `major_depression_abstracts`
-
-Asegúrate de que los abstracts estén previamente almacenados con los campos `abstract`, `processed`, `entities`.
+- **MongoDB**: Asegúrate de tener MongoDB ejecutando en `mongodb://localhost:27017`.
+- **Configuración:** Los parámetros de conexión y configuración están definidos en `config/config.conf`.
 
 ---
 
-## Scripts
+## 🚀 Uso del Proyecto
 
-### 🔹 `ner/view_entities.py`
-
-Imprime por consola las entidades reconocidas por los modelos biomédicos.
+### 1️⃣ Sincronización Completa (Automática)
 
 ```bash
-python ner/view_entities.py
+python sync_components.py --refresh --ner --preprocess --metrics --embeddings --summary
 ```
 
----
+### 2️⃣ Ejecución Manual de Scripts
 
-### 🔹 `text_mining/metrics.py`
-
-Genera:
-
-- `output/term_frequencies.csv`
-- `output/wordcloud.png`
-- `output/tfidf_matrix.csv`
-- `output/clusters.csv`
-
-Y muestra la nube de palabras al ejecutar.
-
+#### 🔹 Extracción de Abstracts (PubMed)
 ```bash
-python text_mining/metrics.py
+python api/pubmed_api.py
 ```
 
----
+#### 🔹 Extracción de Entidades (NER)
+```bash
+python ner/ner.py
+```
 
-### 🔹 `embedding/faiss_search.py`
+#### 🔹 Preprocesamiento de Abstracts
+```bash
+python preprocessing/preprocessor.py
+```
 
-- Crea `embeddings.npy` y `embedding_pmids.csv`
-- Muestra los 5 abstracts más similares a una frase de búsqueda
+#### 🔹 Generación de Métricas de Texto
+```bash
+python mining/metrics.py
+```
 
+#### 🔹 Generación de Embeddings y Búsqueda Semántica
 ```bash
 python embedding/faiss_search.py
 ```
 
+#### 🔹 Generación de Resúmenes Automáticos
+```bash
+python preprocessing/generate_summary.py
+```
+
 ---
 
-## Output
+## 🌐 Aplicación Web (Streamlit)
 
-Todos los resultados relevantes se guardan en la carpeta `output/`.
+```bash
+streamlit run web_app/app.py
+```
 
+---
+
+## 🔧 Configuración (config/config.conf)
+
+```ini
+[db]
+uri = mongodb://localhost:27017
+db_name = PubMedDB
+collection_name = major_depression_abstracts
+
+[pubmed]
+email = TU_CORREO@ejemplo.com
+batch_size = 100
+
+[preprocessor]
+spacy_model = en_core_sci_sm
+```
+
+---
+
+## ✅ Output (Resultados)
+
+Los resultados se guardan en la carpeta `output/` y se sincronizan automáticamente con `web_app/data`.
+
+---
+
+## 📌 Autor
+
+- **Nombre:** Alejandro Delgado Peribáñez
+- **Máster en Bioinformática & Bioestadistica - UOC**
+
+---
+
+## 📄 Licencia
+
+Este proyecto está bajo la licencia MIT.
