@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import os
 import configparser
 from collections import Counter, defaultdict
@@ -141,3 +138,39 @@ def tfidf_by_year(docs: list[dict], max_features: int = 500) -> dict[str, tuple[
         result[year] = (vectorizer, tfidf)
 
     return result
+
+def chemical_frequency(docs: list[dict]) -> Counter:
+    """
+    Cuenta la frecuencia de aparición de entidades 'Chemical' en los abstracts.
+
+    Args:
+        docs (list[dict]): Lista de documentos con entidades NER.
+
+    Returns:
+        Counter: Conteo de menciones por nombre de medicamento.
+    """
+    counter = Counter()
+    for doc in docs:
+        for ent in doc.get("entities", []):
+            if ent["label"] == "Chemical":
+                counter[ent["text"].lower()] += 1
+    return counter
+
+def chemical_outcome_cooccurrence(docs: list[dict]) -> Counter:
+    """
+    Calcula co-ocurrencias entre 'Chemical' y términos relacionados con eficacia.
+
+    Args:
+        docs (list[dict]): Lista de documentos con entidades NER.
+
+    Returns:
+        Counter: Conteo de pares (chemical, outcome) por documento.
+    """
+    cooc = Counter()
+    for doc in docs:
+        chems = [ent["text"].lower() for ent in doc.get("entities", []) if ent["label"] == "Chemical"]
+        outcomes = [ent["text"].lower() for ent in doc.get("entities", []) if ent["label"] in {"Outcome", "Effect", "Result"}]
+        for chem in chems:
+            for outc in outcomes:
+                cooc[(chem, outc)] += 1
+    return cooc
