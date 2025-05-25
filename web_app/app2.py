@@ -170,8 +170,8 @@ def page_analisis():
 
     ent_df = pd.DataFrame(records, columns=["type", "word", "year"])
 
-    tabs = st.tabs(["💊 Top Fármacos",
-                    "💥 Fármacos vs Resultados",
+    tabs = st.tabs(["💊 Top farmacos",
+                    "💥 farmacos vs Resultados",
                     "📈 Evolución Temporal",
                     "🌐 Red de Tratamientos y Resultados"])
 
@@ -183,7 +183,7 @@ def page_analisis():
     with tabs[1]:
         st.markdown("### 💥 Co-ocurrencias Chemical – Outcome")
         df_out = extract_contextual_chemical_outcomes(mongo_coll)
-        st.dataframe(df_out.head(20))
+        st.dataframe(df_out.head(10))
         pivot_df = df_out.pivot_table(index="Chemical", columns="Outcome", values="Count", fill_value=0)
         fig, ax = plt.subplots(figsize=(10, 6))
         sns.heatmap(pivot_df, cmap="Blues", ax=ax)
@@ -194,25 +194,25 @@ def page_analisis():
         chem_df = ent_df[(ent_df["type"] == "Chemical") & (ent_df["year"].notna())]
         year_counts = chem_df.groupby("year").size()
         st.line_chart(year_counts)
-        st.caption("Número de menciones de fármacos (entidades 'Chemical') por año en los abstracts.")
+        st.caption("Número de menciones de farmacos (entidades 'Chemical') por año en los abstracts.")
 
-        st.markdown("### 🔍 Evolución temporal de uno o más fármacos")
-        selected_drugs = st.multiselect("Selecciona uno o más fármacos", sorted(chem_df["word"].unique()))
+        st.markdown("### 🔍 Evolución temporal de uno o más farmacos")
+        selected_drugs = st.multiselect("Selecciona uno o más farmacos", sorted(chem_df["word"].unique()))
         if selected_drugs:
             multi_df = chem_df[chem_df["word"].isin(selected_drugs)]
             multi_year_counts = multi_df.groupby(["word", "year"]).size().unstack(fill_value=0)
             st.line_chart(multi_year_counts.T)
-            st.caption("Comparativa de menciones por año entre los fármacos seleccionados.")
+            st.caption("Comparativa de menciones por año entre los farmacos seleccionados.")
 
     with tabs[3]:
         df_net = extract_contextual_chemical_outcomes(mongo_coll)
-        selected_focus = st.selectbox("Filtrar red por un fármaco específico (opcional):",
+        selected_focus = st.selectbox("Filtrar red por un farmaco específico (opcional):",
                                       ["(Todos)"] + sorted(df_net['Chemical'].unique()))
         grafo_titulo = "Red de co-ocurrencias entre tratamientos y resultados"
         if selected_focus != "(Todos)":
             grafo_titulo += f" centrada en: {selected_focus}"
         st.markdown(f"### 🌐 {grafo_titulo}")
-        st.markdown("""Esta red representa las relaciones entre los fármacos detectados (entidades `Chemical`) 
+        st.markdown("""Esta red representa las relaciones entre los farmacos detectados (entidades `Chemical`) 
         y los resultados clínicos asociados a eficacia (como *remission*, *response*, etc.) que aparecen en los 
         mismos abstracts. Cada nodo representa un término, y las aristas reflejan el número de co-ocurrencias 
         detectadas entre ambos conceptos.""")
@@ -249,11 +249,11 @@ def page_analisis():
         edge_labels = nx.get_edge_attributes(G, 'weight')
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7)
         st.pyplot(plt.gcf())
-        st.caption("Visualización de las relaciones más frecuentes entre fármacos y resultados clínicos.")
+        st.caption("Visualización de las relaciones más frecuentes entre farmacos y resultados clínicos.")
 
         st.markdown("#### 🧭 Leyenda de colores:")
-        st.markdown("- 🟦 **Azul intenso**: fármacos con alta conectividad (≥4 relaciones)")
-        st.markdown("- 🔷 **Azul claro**: otros fármacos")
+        st.markdown("- 🟦 **Azul intenso**: farmacos con alta conectividad (≥4 relaciones)")
+        st.markdown("- 🔷 **Azul claro**: otros farmacos")
         st.markdown("- 🟩 **Verde intenso**: outcomes muy conectados")
         st.markdown("- 🟢 **Verde claro**: otros resultados clínicos")
 
@@ -267,18 +267,23 @@ def page_analisis():
 
 # === Página 3: Caso clínico ===
 def page_caso():
-    st.title("📋 Caso de Uso Clínico: Exploración de un Fármaco")
-    fármaco = st.text_input("Introduce el nombre del fármaco (minúsculas):")
-    if fármaco:
+    st.title("📋 Caso de Uso Clínico: Exploración de un farmaco")
+    farmaco = st.text_input("Introduce el nombre del farmaco (minúsculas):")
+    docs_test = list(mongo_coll.find({
+        "entities.word": {"$regex": farmaco, "$options": "i"}
+    }))
+    st.markdown(f"Documentos devueltos por el filtro: {len(docs_test)}")
+
+    if farmaco:
         total = mongo_coll.count_documents(
-            {"entities.entity_group": "Chemical", "entities.word": {"$regex": fármaco, "$options": "i"}})
-        st.markdown(f"Este fármaco aparece en **{total} abstracts**.")
+            {"entities.entity_group": "Chemical", "entities.word": {"$regex": farmaco, "$options": "i"}})
+        st.markdown(f"Este farmaco aparece en **{total} abstracts**.")
 
         OUTCOME_KEYWORDS = {"remission", "improvement", "response", "recovery", "relapse"}
         count = 0
         ejemplos = []
         for doc in mongo_coll.find(
-                {"abstract": {"$exists": True}, "entities.word": {"$regex": fármaco, "$options": "i"}},
+                {"abstract": {"$exists": True}, "entities.word": {"$regex": farmaco, "$options": "i"}},
                 {"abstract": 1, "pmid": 1}):
             abstract = doc.get("abstract", "")
             pmid = doc.get("pmid")
