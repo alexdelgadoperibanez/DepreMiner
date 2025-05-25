@@ -1,13 +1,31 @@
+import tempfile
+import os
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import networkx as nx
 import streamlit as st
+
 from pymongo import MongoClient
 from utils.faiss_utils import load_index_and_docs, search_similar
 from utils.bio_chat import generate_biomedical_answer
 from utils.pattern_extractor import extract_contextual_chemical_outcomes
 from utils.ner_utils import render_ner_html
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 from sentence_transformers import SentenceTransformer
+
+from api.local_loader import load_local_collection
+
+coll = load_local_collection()
+total = len(coll.docs)
+with_entities = sum(1 for doc in coll.docs if isinstance(doc.get("entities"), list) and len(doc["entities"]) > 0)
+
+print(f"Documentos cargados: {total}")
+print(f"Con entities no vacíos: {with_entities}")
+
+docs = coll.find({"entities.0": {"$exists": True}})
+print(f"Resultados con filtro 'entities.0 $exists': {len(docs)}")
+
 
 # Configuración inicial
 st.set_page_config(page_title="TFM - Eficacia de Tratamientos", layout="wide")
@@ -16,8 +34,23 @@ st.set_page_config(page_title="TFM - Eficacia de Tratamientos", layout="wide")
 index, docs_texts, pmids = load_index_and_docs()
 
 # Cargar conexión MongoDB
-mongo_client = MongoClient("mongodb://localhost:27017")
-mongo_coll = mongo_client["PubMedDB"]["major_depression_abstracts"]
+# mongo_client = MongoClient("mongodb://localhost:27017")
+# mongo_coll = mongo_client["PubMedDB"]["major_depression_abstracts"]
+
+try:
+    from config_runtime import USE_LOCAL
+except ImportError:
+    USE_LOCAL = False
+
+if USE_LOCAL:
+    from api.local_loader import load_local_collection
+
+    mongo_coll = load_local_collection()
+else:
+    from pymongo import MongoClient
+
+    mongo_client = MongoClient("mongodb://localhost:27017")
+    mongo_coll = mongo_client["PubMedDB"]["major_depression_abstracts"]
 
 # Función de búsqueda semántica
 model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
@@ -118,6 +151,8 @@ def determine_relevance(distance: float) -> str:
         return "🟡 Poco Relevante"
     else:
         return "🔴 No Relevante"
+
+
 # === Página 2: Análisis agregado ===
 def page_analisis():
     st.title("📊 Análisis Agregado de Literatura")
@@ -135,7 +170,10 @@ def page_analisis():
 
     ent_df = pd.DataFrame(records, columns=["type", "word", "year"])
 
-    tabs = st.tabs(["💊 Top Fármacos", "💥 Fármacos vs Resultados", "📈 Evolución Temporal"])
+    tabs = st.tabs(["💊 Top Fármacos",
+                    "💥 Fármacos vs Resultados",
+                    "📈 Evolución Temporal",
+                    "🌐 Red de Tratamientos y Resultados"])
 
     with tabs[0]:
         st.markdown("### 💊 Top medicamentos mencionados")
@@ -165,6 +203,68 @@ def page_analisis():
             multi_year_counts = multi_df.groupby(["word", "year"]).size().unstack(fill_value=0)
             st.line_chart(multi_year_counts.T)
             st.caption("Comparativa de menciones por año entre los fármacos seleccionados.")
+
+    with tabs[3]:
+        df_net = extract_contextual_chemical_outcomes(mongo_coll)
+        selected_focus = st.selectbox("Filtrar red por un fármaco específico (opcional):",
+                                      ["(Todos)"] + sorted(df_net['Chemical'].unique()))
+        grafo_titulo = "Red de co-ocurrencias entre tratamientos y resultados"
+        if selected_focus != "(Todos)":
+            grafo_titulo += f" centrada en: {selected_focus}"
+        st.markdown(f"### 🌐 {grafo_titulo}")
+        st.markdown("""Esta red representa las relaciones entre los fármacos detectados (entidades `Chemical`) 
+        y los resultados clínicos asociados a eficacia (como *remission*, *response*, etc.) que aparecen en los 
+        mismos abstracts. Cada nodo representa un término, y las aristas reflejan el número de co-ocurrencias 
+        detectadas entre ambos conceptos.""")
+
+        min_count = st.slider("Filtrar relaciones por número mínimo de co-ocurrencias:", 1, 10, 3)
+        G = nx.Graph()
+
+        filtered_df = df_net[df_net['Count'] >= min_count]
+        if selected_focus != "(Todos)":
+            filtered_df = filtered_df[filtered_df['Chemical'] == selected_focus]
+
+        if filtered_df.empty:
+            st.warning("No hay datos suficientes para construir la red con los filtros actuales.")
+        else:
+            for row in filtered_df.itertuples():
+                chem = row.Chemical
+                outcome = row.Outcome
+                weight = row.Count
+                G.add_node(chem, type="Chemical")
+                G.add_node(outcome, type="Outcome")
+                G.add_edge(chem, outcome, weight=weight)
+
+            pos = nx.spring_layout(G, seed=42, k=0.5)
+        plt.figure(figsize=(12, 8))
+        node_colors = [
+            "deepskyblue" if G.nodes[n].get("type") == "Chemical" and G.degree(n) >= 4 else
+            "lightblue" if G.nodes[n].get("type") == "Chemical" else
+            "palegreen" if G.degree(n) >= 4 else
+            "lightgreen" for n in G.nodes()
+        ]
+        node_sizes = [300 + 100 * G.degree(n) for n in G.nodes()]
+        nx.draw_networkx(G, pos, with_labels=True, node_size=node_sizes, font_size=9,
+                         node_color=node_colors, edge_color='gray')
+        edge_labels = nx.get_edge_attributes(G, 'weight')
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7)
+        st.pyplot(plt.gcf())
+        st.caption("Visualización de las relaciones más frecuentes entre fármacos y resultados clínicos.")
+
+        st.markdown("#### 🧭 Leyenda de colores:")
+        st.markdown("- 🟦 **Azul intenso**: fármacos con alta conectividad (≥4 relaciones)")
+        st.markdown("- 🔷 **Azul claro**: otros fármacos")
+        st.markdown("- 🟩 **Verde intenso**: outcomes muy conectados")
+        st.markdown("- 🟢 **Verde claro**: otros resultados clínicos")
+
+        # Exportar a GraphML
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".graphml") as tmp_file:
+            nx.write_graphml(G, tmp_file.name)
+            with open(tmp_file.name, "rb") as f:
+                st.download_button("💾 Descargar red en formato GraphML", data=f,
+                                   file_name="chemical_outcome_network.graphml", mime="application/octet-stream")
+            os.unlink(tmp_file.name)
+
 # === Página 3: Caso clínico ===
 def page_caso():
     st.title("📋 Caso de Uso Clínico: Exploración de un Fármaco")

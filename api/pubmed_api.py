@@ -103,3 +103,25 @@ def store_abstracts_in_mongo(abstracts: list[dict], db_name: str, collection_nam
         coll.update_one({"pmid": pmid}, {"$set": doc}, upsert=True)
 
     print(f"Se han almacenado/actualizado {len(abstracts)} documentos en '{collection_name}'.")
+
+if __name__ == "__main__":
+    print("🚀 Ejecutando descarga de abstracts desde PubMed...")
+
+    # Cargar configuración
+    config = configparser.ConfigParser()
+    config.read("config/config.conf")
+
+    Entrez.email = config.get("pubmed", "email")
+    query_path = config.get("pubmed", "query_path")
+    db_uri = config.get("db", "uri")
+    db_name = config.get("db", "database")
+    collection_name = config.get("db", "collection")
+
+    # Leer query y lanzar flujo completo
+    query = load_query_from_file(query_path)
+    ids = get_all_ids(query)
+    abstracts = fetch_pubmed_abstracts(ids)
+    store_abstracts_in_mongo(abstracts, db_name, collection_name, db_uri)
+
+    print("✅ Descarga y almacenamiento completados.")
+

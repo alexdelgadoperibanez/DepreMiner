@@ -52,3 +52,17 @@ def save_pmids_and_texts(pmids: list[str], texts: list[str]) -> None:
     """
     pd.DataFrame({"pmid": pmids}).to_csv(os.path.join(OUTPUT_DIR, "embedding_pmids.csv"), index=False)
     pd.DataFrame({"pmid": pmids, "text": texts}).to_csv(os.path.join(OUTPUT_DIR, "embedding_texts.csv"), index=False)
+
+if __name__ == "__main__":
+    print("🔍 Generando embeddings y creando índice FAISS...")
+
+    texts, pmids = load_documents_from_mongo()
+    if not texts:
+        print("⚠️ No se encontraron textos procesados en MongoDB.")
+        exit(1)
+
+    embeddings = create_and_save_embeddings(texts)
+    save_pmids_and_texts(pmids, texts)
+
+    print(f"✅ Embeddings guardados en '{OUTPUT_DIR}'")
+    print(f"✅ Total de documentos: {len(texts)}")

@@ -198,3 +198,20 @@ def update_documents_with_entities(
         entities_filtered = combine_and_filter_entities(entities_total)
         coll.update_one({"_id": doc["_id"]}, {"$set": {"entities": entities_filtered}})
 
+if __name__ == "__main__":
+    print("🧠 Iniciando extracción de entidades NER...")
+
+    # 1. Cargar configuración
+    cfg = load_config()
+    mongo_uri = cfg.get("db", "uri")
+    db_name = cfg.get("db", "database")
+    collection = cfg.get("db", "collection")
+
+    model_list = [m.strip() for m in cfg.get("ner", "models").split(",")]
+    threshold = float(cfg.get("ner", "score_threshold", fallback="0.61"))
+
+    # 2. Cargar modelos
+    ner_models = []
+    for model_name in model_list:
+        pipe = load_ner_pipeline(model_name)
+        tokenizer = pipe.tokenizer  # mismo para todos si son i

@@ -64,12 +64,13 @@ def main():
 
     # === FLAGS activados por argumentos ===
     args = [arg.lower() for arg in sys.argv]
-    do_refresh = "--refresh" in args
-    do_ner = "--ner" in args
-    do_preprocess = "--preprocess" in args
-    do_metrics = "--metrics" in args
-    do_embeddings = "--embeddings" in args
-    do_summary = "--summary" in args
+    do_all = "--all" in args
+    do_refresh = "--refresh" in args or do_all
+    do_ner = "--ner" in args or do_all
+    do_preprocess = "--preprocess" in args or do_all
+    do_metrics = "--metrics" in args or do_all
+    do_embeddings = "--embeddings" in args or do_all
+    do_summary = "--summary" in args or do_all
 
     # === Ejecución de componentes ===
     if do_refresh:

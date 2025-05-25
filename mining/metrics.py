@@ -97,3 +97,29 @@ def perform_clustering(tfidf_matrix: pd.DataFrame, docs: list[dict]) -> pd.DataF
     df_clusters.to_csv(os.path.join(OUTPUT_DIR, "clusters.csv"), index=False)
     print("Clustering completado y guardado.")
     return df_clusters
+
+if __name__ == "__main__":
+    print("📊 Ejecutando análisis de métricas...")
+
+    docs = load_documents()
+    if not docs:
+        print("⚠️ No hay documentos procesados en la colección.")
+        exit(1)
+
+    # Frecuencia de términos
+    freq_df = generate_term_frequencies(docs)
+    print("✅ Frecuencias de términos guardadas.")
+
+    # WordCloud
+    counter = Counter(dict(zip(freq_df["token"], freq_df["freq"])))
+    generate_wordcloud(counter)
+    print("✅ WordCloud generada.")
+
+    # TF-IDF
+    tfidf_df = generate_tfidf_matrix(docs)
+    print("✅ Matriz TF-IDF guardada.")
+
+    # Clustering
+    perform_clustering(tfidf_df, docs)
+    print("✅ Clustering completado.")
+
