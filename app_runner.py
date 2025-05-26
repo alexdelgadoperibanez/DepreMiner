@@ -16,12 +16,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Crear archivo de configuración temporal para que `app2.py` lo lea
+    # Crear archivo de configuración temporal para que `app.py` lo lea
     with open("config_runtime.py", "w") as f:
         f.write(f"USE_LOCAL = {args.mode == 'local'}\n")
 
     # Lanza Streamlit
-    sys.argv = ["streamlit", "run", "web_app/app2.py"]
+    sys.argv = ["streamlit", "run", "web_app/app.py"]
     sys.exit(stcli.main())
 
 

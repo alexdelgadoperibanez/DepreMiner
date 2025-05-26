@@ -1,37 +1,63 @@
-import streamlit as st
+import tempfile
+import os
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from wordcloud import WordCloud
-from collections import Counter
+import networkx as nx
+import streamlit as st
 
-from sentence_transformers import SentenceTransformer
 from pymongo import MongoClient
-
-from utils.ner_utils import render_ner_html
 from utils.faiss_utils import load_index_and_docs, search_similar
-from utils.bio_chat import generate_biomedical_answer
+from utils.biochat2 import generate_biomedical_answer
 from utils.pattern_extractor import extract_contextual_chemical_outcomes
+from utils.ner_utils import render_ner_html
+from sentence_transformers import SentenceTransformer
+
+from api.local_loader import load_local_collection
+
+coll = load_local_collection()
+total = len(coll.docs)
+with_entities = sum(1 for doc in coll.docs if isinstance(doc.get("entities"), list) and len(doc["entities"]) > 0)
+
+print(f"Documentos cargados: {total}")
+print(f"Con entities no vacíos: {with_entities}")
+
+docs = coll.find({"entities.0": {"$exists": True}})
+print(f"Resultados con filtro 'entities.0 $exists': {len(docs)}")
 
 
+# Configuración inicial
+st.set_page_config(page_title="TFM - Eficacia de Tratamientos", layout="wide")
 
-# Configuración de la app
-st.set_page_config(page_title="PubMed TFM - Búsqueda Semántica", layout="wide")
-
-# Cargar FAISS + textos reales
+# Cargar index FAISS y modelo
 index, docs_texts, pmids = load_index_and_docs()
+
+# Cargar conexión MongoDB
+# mongo_client = MongoClient("mongodb://localhost:27017")
+# mongo_coll = mongo_client["PubMedDB"]["major_depression_abstracts"]
+
+try:
+    from config_runtime import USE_LOCAL
+except ImportError:
+    USE_LOCAL = False
+
+if USE_LOCAL:
+    from api.local_loader import load_local_collection
+
+    mongo_coll = load_local_collection()
+else:
+    from pymongo import MongoClient
+
+    mongo_client = MongoClient("mongodb://localhost:27017")
+    mongo_coll = mongo_client["PubMedDB"]["major_depression_abstracts"]
+
+# Función de búsqueda semántica
 model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
 
-# Cargar MongoDB
-mongo_client = MongoClient("mongodb://localhost:27017")
-mongo_coll = mongo_client["PubMedDB"]["major_depression_abstracts"]
-
-# ========================
-# FUNCIONES
-# ========================
-
-def show_search():
-    st.title("🔍 Búsqueda Semántica de Abstracts en PubMed")
+# === Página 1: Exploración clínica ===
+def page_exploracion():
+    st.title("🔍 Exploración Clínica de Abstracts")
     query = st.text_input("Escribe tu consulta (en inglés):", placeholder="ej. efficacy of SSRIs in elderly patients")
     year_filter = st.slider("Filtrar por año:", 1990, 2025, (1990, 2025))
 
@@ -127,216 +153,196 @@ def determine_relevance(distance: float) -> str:
         return "🔴 No Relevante"
 
 
-def show_dashboard():
-    st.title("📊 Dashboard de Análisis de Abstracts")
+# === Página 2: Análisis agregado ===
+def page_analisis():
+    st.title("📊 Análisis Agregado de Literatura")
 
-    # Datos base
-    total_docs = mongo_coll.count_documents({"abstract": {"$exists": True}})
-    total_entities = mongo_coll.count_documents({"entities.0": {"$exists": True}})
-    st.markdown(f"- 🧾 Abstracts con texto: **{total_docs}**")
-    st.markdown(f"- 🧠 Abstracts con entidades NER: **{total_entities}**")
-
-    # Preparar datos base una sola vez
-    all_entities = []
-    entity_map = {}
-    cursor = mongo_coll.find({"entities.0": {"$exists": True}}, {"entities": 1, "pmid": 1, "title": 1, "date": 1})
-    for doc in cursor:
-        pmid = str(doc.get("pmid"))
-        chemicals = set()
-        diseases = set()
-        for ent in doc["entities"]:
+    df = pd.DataFrame(list(mongo_coll.find({"entities.0": {"$exists": True}}, {"entities": 1, "date": 1})))
+    records = []
+    for row in df.itertuples():
+        date = getattr(row, "date", "")
+        year = int(date.split()[0]) if date and date.split()[0].isdigit() else None
+        for ent in row.entities:
             label = ent.get("entity_group")
-            word_original = ent.get("word")
-            if not word_original:
-                continue
-            word_original = word_original.strip()
-            date = doc.get("date", "")
-            all_entities.append((label, word_original, date))
-            if label == "Chemical":
-                chemicals.add(word_original)
-            elif label == "Disease":
-                diseases.add(word_original)
-        entity_map[pmid] = {
-            "chemical": chemicals,
-            "disease": diseases,
-            "title": doc.get("title", "Sin título"),
-            "date": doc.get("date")
+            word = ent.get("word")
+            if label and word:
+                records.append((label, word.lower().strip(), year))
+
+    ent_df = pd.DataFrame(records, columns=["type", "word", "year"])
+
+    tabs = st.tabs(["💊 Top farmacos",
+                    "💥 farmacos vs Resultados",
+                    "📈 Evolución Temporal",
+                    "🌐 Red de Tratamientos y Resultados"])
+
+    with tabs[0]:
+        st.markdown("### 💊 Top medicamentos mencionados")
+        top_chems = ent_df[ent_df["type"] == "Chemical"]["word"].value_counts().head(20)
+        st.bar_chart(top_chems)
+
+    with tabs[1]:
+        st.markdown("### 💥 Co-ocurrencias Chemical – Outcome")
+        df_out = extract_contextual_chemical_outcomes(mongo_coll)
+        st.dataframe(df_out.head(10))
+        pivot_df = df_out.pivot_table(index="Chemical", columns="Outcome", values="Count", fill_value=0)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.heatmap(pivot_df, cmap="Blues", ax=ax)
+        st.pyplot(fig)
+
+    with tabs[2]:
+        st.markdown("### 📈 Menciones de tratamientos farmacológicos por Año")
+        chem_df = ent_df[(ent_df["type"] == "Chemical") & (ent_df["year"].notna())]
+        year_counts = chem_df.groupby("year").size()
+        st.line_chart(year_counts)
+        st.caption("Número de menciones de farmacos (entidades 'Chemical') por año en los abstracts.")
+
+        st.markdown("### 🔍 Evolución temporal de uno o más farmacos")
+        selected_drugs = st.multiselect("Selecciona uno o más farmacos", sorted(chem_df["word"].unique()))
+        if selected_drugs:
+            multi_df = chem_df[chem_df["word"].isin(selected_drugs)]
+            multi_year_counts = multi_df.groupby(["word", "year"]).size().unstack(fill_value=0)
+            st.line_chart(multi_year_counts.T)
+            st.caption("Comparativa de menciones por año entre los farmacos seleccionados.")
+
+    with tabs[3]:
+        df_net = extract_contextual_chemical_outcomes(mongo_coll)
+        selected_focus = st.selectbox("Filtrar red por un farmaco específico (opcional):",
+                                      ["(Todos)"] + sorted(df_net['Chemical'].unique()))
+        grafo_titulo = "Red de co-ocurrencias entre tratamientos y resultados"
+        if selected_focus != "(Todos)":
+            grafo_titulo += f" centrada en: {selected_focus}"
+        st.markdown(f"### 🌐 {grafo_titulo}")
+        st.markdown("""Esta red representa las relaciones entre los farmacos detectados (entidades `Chemical`) 
+        y los resultados clínicos asociados a eficacia (como *remission*, *response*, etc.) que aparecen en los 
+        mismos abstracts. Cada nodo representa un término, y las aristas reflejan el número de co-ocurrencias 
+        detectadas entre ambos conceptos.""")
+
+        min_count = st.slider("Filtrar relaciones por número mínimo de co-ocurrencias:", 1, 10, 3)
+        G = nx.Graph()
+
+        filtered_df = df_net[df_net['Count'] >= min_count]
+        if selected_focus != "(Todos)":
+            filtered_df = filtered_df[filtered_df['Chemical'] == selected_focus]
+
+        if filtered_df.empty:
+            st.warning("No hay datos suficientes para construir la red con los filtros actuales.")
+        else:
+            for row in filtered_df.itertuples():
+                chem = row.Chemical
+                outcome = row.Outcome
+                weight = row.Count
+                G.add_node(chem, type="Chemical")
+                G.add_node(outcome, type="Outcome")
+                G.add_edge(chem, outcome, weight=weight)
+
+            pos = nx.spring_layout(G, seed=42, k=0.5)
+        plt.figure(figsize=(12, 8))
+        node_colors = [
+            "deepskyblue" if G.nodes[n].get("type") == "Chemical" and G.degree(n) >= 4 else
+            "lightblue" if G.nodes[n].get("type") == "Chemical" else
+            "palegreen" if G.degree(n) >= 4 else
+            "lightgreen" for n in G.nodes()
+        ]
+        node_sizes = [300 + 100 * G.degree(n) for n in G.nodes()]
+        nx.draw_networkx(G, pos, with_labels=True, node_size=node_sizes, font_size=9,
+                         node_color=node_colors, edge_color='gray')
+        edge_labels = nx.get_edge_attributes(G, 'weight')
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7)
+        st.pyplot(plt.gcf())
+        st.caption("Visualización de las relaciones más frecuentes entre farmacos y resultados clínicos.")
+
+        st.markdown("#### 🧭 Leyenda de colores:")
+        st.markdown("- 🟦 **Azul intenso**: farmacos con alta conectividad (≥4 relaciones)")
+        st.markdown("- 🔷 **Azul claro**: otros farmacos")
+        st.markdown("- 🟩 **Verde intenso**: outcomes muy conectados")
+        st.markdown("- 🟢 **Verde claro**: otros resultados clínicos")
+
+        # Exportar a GraphML
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".graphml") as tmp_file:
+            nx.write_graphml(G, tmp_file.name)
+            with open(tmp_file.name, "rb") as f:
+                st.download_button("💾 Descargar red en formato GraphML", data=f,
+                                   file_name="chemical_outcome_network.graphml", mime="application/octet-stream")
+            os.unlink(tmp_file.name)
+
+# === Página 3: Caso clínico ===
+def page_caso():
+    st.title("📋 Caso de Uso Clínico: Exploración de un farmaco")
+    farmaco = st.text_input("Introduce el nombre del farmaco (minúsculas):")
+    docs_test = list(mongo_coll.find({
+        "entities.word": {"$regex": farmaco, "$options": "i"}
+    }))
+    st.markdown(f"Documentos devueltos por el filtro: {len(docs_test)}")
+
+    if farmaco:
+        OUTCOME_KEYWORDS = {
+            "remission", "response", "improvement", "recovery", "relapse", "recurrence",
+            "efficacy", "effectiveness", "worsening", "dropout", "nonresponse", "resistance",
+            "symptom reduction", "amelioration", "clinical outcome", "treatment outcome", "benefit",
+            "HAM-D", "HDRS", "MADRS", "PHQ-9", "score", "scale", "baseline", "endpoint"
         }
 
-    df = pd.DataFrame(all_entities, columns=["type", "word", "date"])
-
-    tabs = st.tabs([
-        "🧪 Top Entidades", "📈 Análisis Temporal",
-        "🔎 Comparativa de Tratamientos", "📈 Abstracts por Año",
-        "📝 Metodología de Estudios", "💊 Tratamientos Farmacológicos",
-        "💥 Co-ocurrencias Chemical – Outcome"
-    ])
-
-    # === Top Entidades ===
-    with tabs[0]:
-        st.markdown("### 🧪 Top entidades por tipo")
-        selected_type = st.selectbox("Selecciona tipo de entidad", df["type"].unique(), key="top_entities_select")
-        top_entities = df[df["type"] == selected_type]["word"].value_counts().head(20)
-        st.bar_chart(top_entities)
-
-    # === Análisis Temporal ===
-    with tabs[1]:
-        st.markdown("### 📈 Análisis Temporal por Entidad")
-        selected_type = st.selectbox("Selecciona tipo de entidad", df["type"].unique(), key="temporal_select")
-        filtered_df = df[df["type"] == selected_type].copy()
-        filtered_df["year"] = pd.to_numeric(
-            filtered_df["date"].str.extract(r"(\d{4})")[0], errors="coerce"
-        ).dropna().astype(int)
-        if filtered_df["year"].empty:
-            st.warning("No se encontraron fechas válidas para esta entidad.")
-        else:
-            year_counts = filtered_df["year"].value_counts().sort_index()
-            fig, ax = plt.subplots()
-            ax.plot(year_counts.index, year_counts.values, marker="o", linestyle="-")
-            ax.set_xlabel("Año")
-            ax.set_ylabel("Número de menciones")
-            ax.set_title(f"Menciones de {selected_type} por Año")
-            ax.grid(True)
-            st.pyplot(fig)
-
-    # === Comparativa entre entidades ===
-    with tabs[2]:
-        st.markdown("### 📊 Comparar Entidades por Año")
-        selected_type = st.selectbox("Selecciona tipo de entidad para comparar", df["type"].unique(),
-                                     key="compare_select")
-        comparison_df = df[df["type"] == selected_type].copy()
-        entities_to_compare = st.multiselect("Selecciona entidades para comparar",
-                                             comparison_df["word"].unique(), key="compare_entities")
-        if entities_to_compare:
-            comp_df = comparison_df[comparison_df["word"].isin(entities_to_compare)]
-            comp_df["year"] = pd.to_numeric(
-                comp_df["date"].str.extract(r"(\d{4})")[0], errors="coerce"
-            ).dropna().astype(int)
-            comp_counts = comp_df.groupby(["word", "year"]).size().unstack(fill_value=0)
-            st.line_chart(comp_counts.T)
-
-        st.download_button("📥 Descargar Datos", data=comparison_df.to_csv(index=False),
-                           file_name="comparison_analysis.csv", key="download_comparison_csv")
-
-    # === Abstracts por Año ===
-    with tabs[3]:
-        st.markdown("### 📈 Número de Abstracts por Año")
-        df["year"] = pd.to_numeric(df["date"].str.extract(r"(\d{4})")[0], errors="coerce").dropna().astype(int)
-        doc_counts = df.drop_duplicates(subset=["word", "year"]).groupby("year").size()
-        st.bar_chart(doc_counts)
-
-    # === Metodología de Estudios ===
-    with tabs[4]:
-        st.markdown("### 📝 Análisis de Metodología de Estudios")
-        method_keywords = ["randomized controlled trial", "meta-analysis", "double-blind", "placebo-controlled"]
-        for keyword in method_keywords:
-            count = mongo_coll.count_documents({"abstract": {"$regex": keyword, "$options": "i"}})
-            st.markdown(f"- **{keyword.title()}:** {count} abstracts")
-
-    # === Tratamientos Farmacológicos ===
-    with tabs[5]:
-        st.markdown("### 💊 Análisis de Tratamientos Farmacológicos")
-        chemical_df = df[df["type"] == "Chemical"]
-        top_chemicals = chemical_df["word"].value_counts().head(10)
-        st.markdown("#### 📌 Top 10 Medicamentos más Mencionados")
-        st.bar_chart(top_chemicals)
-
-        st.markdown("#### 📊 Comparativa entre Medicamentos")
-        meds_to_compare = st.multiselect("Selecciona medicamentos para comparar", top_chemicals.index)
-        if meds_to_compare:
-            compare_df = chemical_df[chemical_df["word"].isin(meds_to_compare)]
-            compare_counts = compare_df["word"].value_counts()
-            st.bar_chart(compare_counts)
-
-    # === Co-ocurrencias Chemical – Outcome ===
-    with tabs[6]:
-        st.markdown("### 💥 Co-ocurrencias Chemical – Outcome")
-        from collections import Counter
-
-        # Palabras clave que indican resultados clínicos positivos
-        OUTCOME_KEYWORDS = {"remission", "improvement", "response", "recovery", "relapse"}
-
-        def detect_outcomes_in_text(text: str) -> set:
-            return {kw for kw in OUTCOME_KEYWORDS if kw in text.lower()}
-
-        cooc_counter = Counter()
-
-        for doc in mongo_coll.find({"entities.0": {"$exists": True}}, {"abstract": 1, "entities": 1}):
+        count = 0
+        ejemplos = []
+        for doc in mongo_coll.find(
+                {"abstract": {"$exists": True}, "entities.word": {"$regex": farmaco, "$options": "i"}},
+                {"abstract": 1, "pmid": 1}):
             abstract = doc.get("abstract", "")
-            if not abstract:
-                continue
+            pmid = doc.get("pmid")
+            if any(o in abstract.lower() for o in OUTCOME_KEYWORDS):
+                count += 1
+                link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else ""
+                ejemplos.append((abstract[:300] + "...", link))
 
-            # Detectar medicamentos
-            chems = {
-                e["word"].lower().strip()
-                for e in doc["entities"]
-                if e.get("entity_group") == "Chemical" and e.get("word")
-            }
-
-            # Detectar outcomes manualmente desde el texto
-            outcomes = detect_outcomes_in_text(abstract)
-
-            for chem in chems:
-                for outc in outcomes:
-                    cooc_counter[(chem, outc)] += 1
-
-        # Crear DataFrame de co-ocurrencias
-        cooc_df = pd.DataFrame(
-            [(chem, outc, count) for (chem, outc), count in cooc_counter.items()],
-            columns=["Chemical", "Outcome", "Count"]
-        ).sort_values("Count", ascending=False)
-
-        st.markdown("#### 🔝 Top 10 combinaciones más frecuentes")
-        if not cooc_df.empty:
-            st.dataframe(cooc_df.head(10))
-
-            # Heatmap
-            pivot_df = cooc_df.pivot_table(index="Chemical", columns="Outcome", values="Count", fill_value=0)
-            if not pivot_df.empty:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                sns.heatmap(pivot_df, cmap="Blues", ax=ax)
-                st.pyplot(fig)
-            else:
-                st.warning("No hay suficientes co-ocurrencias para mostrar un heatmap.")
-        else:
-            st.warning("No se encontraron combinaciones de Chemical y Outcome en los abstracts.")
+        st.markdown(f"De ellos, **{count} abstracts** mencionan términos de eficacia clínica.")
+        st.markdown("#### Ejemplos de contexto clínico:")
+        for ex, url in ejemplos[:5]:
+            st.info(ex)
+            if url:
+                st.markdown(f"🔗 [Ver en PubMed]({url})")
 
 
+# === Página 4: Chat clínico ===
+def page_chat():
+    st.title("🤖 Asistente Clínico (Beta)")
 
-def show_chatbot():
-    st.title("🤖 Biomedical Chatbot - Treatments for Major Depressive Disorder")
+    pregunta = st.text_input("Haz una pregunta médica:")
+    if pregunta:
+        results = search_similar(pregunta, model, index, docs_texts, pmids, k=5)
 
-    query = st.text_input("Ask your question:", placeholder="e.g. What antidepressants are used in elderly patients?")
-    if query:
-        # Retrieve most relevant abstracts
-        results = search_similar(query, model, index, docs_texts, pmids, k=3)
-        context = "\n\n".join([
-            mongo_coll.find_one({"pmid": str(r["pmid"])}).get("abstract", "") for r in results
-        ])
+        abstracts = []
+        for r in results:
+            abstract = mongo_coll.find_one({"pmid": str(r["pmid"])}).get("abstract", "")
+            if abstract:
+                abstract = abstract.replace("\n", " ").strip()
+                abstracts.append(abstract[:1000])  # máximo 1000 chars por abstract
 
-        prompt = f"""The following excerpts have been extracted from scientific articles about pharmacological treatments for Major Depressive Disorder:
+        contexto = "\n\n".join(abstracts)
 
-        {context}
-        
-        Researcher's question: {query}
-    
-        Answer based on the articles:"""
+        with st.spinner("Pensando como un experto clínico..."):
+            respuesta_qa, respuesta_biogpt = generate_biomedical_answer(pregunta, contexto)
 
-        with st.spinner("🧠 Generating response with BioGPT..."):
-            answer = generate_biomedical_answer(prompt)
+        with st.expander("Respuesta generada por Bio_ClinicalBERT"):
+            st.success(respuesta_qa)
 
-        st.markdown("### 💬 Chatbot response:")
-        st.success(answer)
+        with st.expander("Respuesta generada por BioGPT_large"):
+            st.success(respuesta_biogpt)
 
-# ========================
-# NAVEGACIÓN
-# ========================
+        with st.expander("🔍 Abstracts utilizados para esta respuesta"):
+            for i, r in enumerate(results):
+                pmid = r["pmid"]
+                abstract = mongo_coll.find_one({"pmid": str(pmid)}).get("abstract", "No abstract available")
+                st.markdown(f"**PMID {pmid}**: {abstract[:500]}...")
 
-page = st.sidebar.radio("🔧 Navegación", ["🔍 Búsqueda", "📊 Dashboard", "🤖 Chatbot (beta version)"])
 
-if page == "🔍 Búsqueda":
-    show_search()
-elif page == "📊 Dashboard":
-    show_dashboard()
-elif page == "🤖 Chatbot (beta version)":
-    show_chatbot()
+# === Navegación ===
+page = st.sidebar.radio("📌 Navegación", ["🔍 Exploración clínica", "📊 Análisis agregado", "📋 Caso clínico", "🤖 Chat clínico"])
+
+if page == "🔍 Exploración clínica":
+    page_exploracion()
+elif page == "📊 Análisis agregado":
+    page_analisis()
+elif page == "📋 Caso clínico":
+    page_caso()
+elif page == "🤖 Chat clínico":
+    page_chat()
