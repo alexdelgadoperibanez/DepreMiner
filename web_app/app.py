@@ -108,9 +108,10 @@ def page_exploracion():
                     # Mostrar directamente la relevancia en el título del artículo
                     with st.expander(f"📄 {result['title'][:100]}... - {result['relevance']}"):
                         st.markdown(f"**PMID:** `{result['pmid']}`  \n**Distancia FAISS:** `{result['distance']:.4f}`")
+                        st.markdown(f"🔗 [Ver en PubMed](https://pubmed.ncbi.nlm.nih.gov/{result['pmid']}/)")
 
                         full_text = doc.get("abstract1", "") + doc.get("abstract2", "")
-                        st.markdown("#### Título del abstract:")
+                        st.markdown("#### Título del artículo:")
                         st.write(doc.get("title", ""))
 
                         # Mostrar resumen si existe
@@ -129,8 +130,8 @@ def page_exploracion():
                         else:
                             st.info("ℹ️ No se encontraron entidades NER para este documento.")
 
-                    st.markdown("#### Acceso directo al artículo:")
-                    st.markdown(f"🔗 [Ver en PubMed](https://pubmed.ncbi.nlm.nih.gov/{result['pmid']}/)")
+                    # st.markdown("#### Acceso directo al artículo:")
+                    # st.markdown(f"🔗 [Ver en PubMed](https://pubmed.ncbi.nlm.nih.gov/{result['pmid']}/)")
 
 
 def determine_relevance(distance: float) -> str:
