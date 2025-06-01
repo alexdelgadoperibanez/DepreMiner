@@ -10,7 +10,7 @@ def main():
     parser.add_argument(
         "--mode",
         choices=["local", "mongo"],
-        default="mongo",  # Valor por defecto será MongoDB
+        default="local",  # Valor por defecto será MongoDB
         help="Especifica si usar MongoDB o el cargador local (local)",
     )
 
