@@ -15,6 +15,7 @@ from utils.ner_utils import render_ner_html
 from sentence_transformers import SentenceTransformer
 
 from api.local_loader import load_local_collection
+from web_app.utils.biochat import generate_biomedical_answer_langchain
 
 coll = load_local_collection()
 total = len(coll.docs)
@@ -55,7 +56,7 @@ else:
 # Función de búsqueda semántica
 model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
 
-# === Página 1: Exploración clínica ===
+# Página 1: Exploración clínica
 def page_exploracion():
     st.title("🔍 Exploración Clínica de Abstracts")
     query = st.text_input("Escribe tu consulta (en inglés):", placeholder="ej. efficacy of SSRIs in elderly patients")
@@ -154,7 +155,7 @@ def determine_relevance(distance: float) -> str:
         return "🔴 No Relevante"
 
 
-# === Página 2: Análisis agregado ===
+# Página 2: Análisis agregado
 def page_analisis():
     st.title("📊 Análisis Agregado de Literatura")
 
@@ -266,7 +267,7 @@ def page_analisis():
                                    file_name="chemical_outcome_network.graphml", mime="application/octet-stream")
             os.unlink(tmp_file.name)
 
-# === Página 3: Caso clínico ===
+# Página 3: Caso clínico
 def page_caso():
     st.title("📋 Caso de Uso Clínico: Exploración de un farmaco")
     farmaco = st.text_input("Introduce el nombre del farmaco (minúsculas):")
@@ -303,7 +304,7 @@ def page_caso():
                 st.markdown(f"🔗 [Ver en PubMed]({url})")
 
 
-# === Página 4: Chat clínico ===
+# Página 4: Chat clínico
 def page_chat():
     st.title("🤖 Asistente Clínico (Beta)")
 
@@ -321,7 +322,8 @@ def page_chat():
         contexto = "\n\n".join(abstracts)
 
         with st.spinner("Pensando como un experto clínico..."):
-            respuesta_qa, respuesta_biogpt = generate_biomedical_answer(pregunta, contexto)
+            #respuesta_qa, respuesta_biogpt = generate_biomedical_answer(pregunta, contexto)
+            respuesta_qa, respuesta_biogpt = generate_biomedical_answer_langchain(pregunta, contexto)
 
         with st.expander("Respuesta generada por Bio_ClinicalBERT"):
             st.success(respuesta_qa)
@@ -336,7 +338,7 @@ def page_chat():
                 st.markdown(f"**PMID {pmid}**: {abstract[:500]}...")
 
 
-# === Navegación ===
+# Navegación
 page = st.sidebar.radio("📌 Navegación", ["🔍 Exploración clínica", "📊 Análisis agregado", "📋 Caso clínico", "🤖 Chat clínico"])
 
 if page == "🔍 Exploración clínica":
