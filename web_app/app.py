@@ -106,14 +106,23 @@ def page_exploracion():
                     result = filtered_results[i]
                     doc = mongo_coll.find_one({"pmid": str(result["pmid"])})
 
-                    # Mostrar directamente la relevancia en el título del artículo
-                    with st.expander(f"📄 {result['title'][:100]}... - {result['relevance']}"):
-                        st.markdown(f"**PMID:** `{result['pmid']}`  \n**Distancia FAISS:** `{result['distance']:.4f}`")
-                        st.markdown(f"🔗 [Ver en PubMed](https://pubmed.ncbi.nlm.nih.gov/{result['pmid']}/)")
+                    # Mostrar encabezado
+                    st.markdown("#### Título del artículo:")
+                    st.write(doc.get("title", ""))
+                    st.markdown(
+                        f" 📄 {result['title'][:100]}...  \n"
+                        f"**Relevancia:** {result['relevance']} | "
+                        f"[🔗 Ver en PubMed](https://pubmed.ncbi.nlm.nih.gov/{result['pmid']}/)"
+                    )
+
+                    # Mostrar detalles dentro del expander
+                    with st.expander("Mostrar detalles"):
+                        st.markdown(
+                            f"**PMID:** `{result['pmid']}`  \n"
+                            f"**Distancia FAISS:** `{result['distance']:.4f}`"
+                        )
 
                         full_text = doc.get("abstract1", "") + doc.get("abstract2", "")
-                        st.markdown("#### Título del artículo:")
-                        st.write(doc.get("title", ""))
 
                         # Mostrar resumen si existe
                         summary = doc.get("summary")
